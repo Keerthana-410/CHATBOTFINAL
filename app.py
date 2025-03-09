@@ -10,6 +10,7 @@ from docx import Document
 import pytesseract
 from PIL import Image
 import tempfile
+from gtts.lang import tts_langs  # Import supported languages for TTS
 
 # Set Page Configuration
 st.set_page_config(page_title="🌍 Language Translation Chatbot", layout="wide")
@@ -25,11 +26,13 @@ with st.sidebar:
 # Functions
 
 def clean_text(text):
+    """Cleans text by removing unnecessary characters."""
     text = re.sub(r'[^\w\s.,!?]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def translate_text(text, dest_languages):
+    """Translates text into selected languages."""
     translator = Translator()
     translations = {}
     try:
@@ -41,6 +44,7 @@ def translate_text(text, dest_languages):
         return {"Error": str(e)}
 
 def detect_language(text):
+    """Detects the language of the input text."""
     try:
         translator = Translator()
         detected = translator.detect(text)
@@ -49,16 +53,26 @@ def detect_language(text):
         return "Unknown"
 
 def text_to_speech(text, lang):
+    """Converts translated text to speech if the language is supported."""
     lang_code = next((code for code, name in LANGUAGES.items() if name.lower() == lang.lower()), None)
-    if not lang_code:
+    
+    # Check if language is supported by gTTS
+    supported_langs = tts_langs()
+    if lang_code not in supported_langs:
         st.error(f"❌ Text-to-speech not available for {lang}")
         return None
-    tts = gTTS(text=text, lang=lang_code)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmpfile:
-        tts.save(tmpfile.name)
-        return tmpfile.name
+
+    try:
+        tts = gTTS(text=text, lang=lang_code)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmpfile:
+            tts.save(tmpfile.name)
+            return tmpfile.name
+    except Exception as e:
+        st.error(f"Error generating speech: {e}")
+        return None
 
 def extract_text_from_file(uploaded_file):
+    """Extracts text from uploaded files (TXT, PDF, DOCX, Image)."""
     file_type = uploaded_file.type
     if "text" in file_type:
         return uploaded_file.read().decode()
@@ -80,6 +94,7 @@ def extract_text_from_file(uploaded_file):
         return "Unsupported file type"
 
 def save_history_as_txt(history):
+    """Saves translation history as a TXT file."""
     if not history:
         return None
     text = ""
