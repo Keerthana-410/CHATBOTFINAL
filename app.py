@@ -3,8 +3,6 @@ import googletrans
 from googletrans import Translator, LANGUAGES
 from gtts import gTTS
 import os
-import speech_recognition as sr
-import textwrap
 import re
 from io import BytesIO
 from PyPDF2 import PdfReader
@@ -60,19 +58,6 @@ def text_to_speech(text, lang):
         tts.save(tmpfile.name)
         return tmpfile.name
 
-def speech_to_text():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.write("🎤 Listening... Speak now!")
-        try:
-            audio = recognizer.listen(source, timeout=5)
-            text = recognizer.recognize_google(audio)
-            return text
-        except sr.UnknownValueError:
-            return "Could not understand audio"
-        except sr.RequestError:
-            return "Error with speech recognition service"
-
 def extract_text_from_file(uploaded_file):
     file_type = uploaded_file.type
     if "text" in file_type:
@@ -105,40 +90,8 @@ def save_history_as_txt(history):
         text += "---\n"
     return text.encode()
 
-# Main Section
-if "speech_text" not in st.session_state:
-    st.session_state.speech_text = ""  # Store speech input in session state
-
 # Target Languages Selection
 dest_languages = st.multiselect("📌 Select target languages:", options=list(LANGUAGES.values()))
-
-# Voice Input Section
-st.write("## 🎤 Voice Input for Translation")
-voice_input = st.button("🎙️ Speak for Translation")
-
-if voice_input:
-    st.session_state.speech_text = speech_to_text()
-    if st.session_state.speech_text:
-        st.text_area("🎤 Recognized Speech for Translation:", st.session_state.speech_text, height=150)
-        detected_lang = detect_language(st.session_state.speech_text)
-        st.write(f"🌍 Detected Language: {LANGUAGES.get(detected_lang, 'Unknown')}")
-
-# Translate Voice Input
-if st.button("🔄 Translate Voice Input"):
-    if st.session_state.speech_text and dest_languages:
-        lang_codes = [code for code, name in LANGUAGES.items() if name in dest_languages]
-        translations = translate_text(st.session_state.speech_text, lang_codes)
-        st.write("### 📝 Translated Voice Input:")
-        for lang, trans in translations.items():
-            st.write(f"**{lang}:** {trans}")
-            audio_file = text_to_speech(trans, lang)
-            if audio_file:
-                st.audio(audio_file, format='audio/mp3')
-        if "history" not in st.session_state:
-            st.session_state.history = []
-        st.session_state.history.append({"Original": st.session_state.speech_text.strip(), "Translated": translations})
-    else:
-        st.write("⚠️ Please speak and select at least one language to translate.")
 
 # File Upload & Translation Section
 st.write("## 📂 File Upload & Translation")
@@ -167,11 +120,7 @@ if uploaded_file:
 
 # Text Input for Translation
 st.write("## ✏️ Enter Text for Translation")
-# Only show text input if no voice input or file upload input is present
-if not (st.session_state.speech_text or uploaded_file):
-    text_input = st.text_area("Enter text to translate:", value="")
-else:
-    text_input = ""  # Clear the text area if voice input or file upload has been used
+text_input = st.text_area("Enter text to translate:", value="")
 
 # Detect language of the entered text
 detected_lang = detect_language(text_input) if text_input else None
