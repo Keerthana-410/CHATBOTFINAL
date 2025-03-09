@@ -6,8 +6,6 @@ import os
 import speech_recognition as sr
 import textwrap
 import re
-import sounddevice as sd
-import numpy as np
 from io import BytesIO
 from PyPDF2 import PdfReader
 from docx import Document
@@ -15,31 +13,23 @@ import pytesseract
 from PIL import Image
 import tempfile
 
-# Page Configuration
-st.set_page_config(page_title="🌍 Language Translator", layout="wide")
+# Set Page Configuration
+st.set_page_config(page_title="🌍 Language Translation Chatbot", layout="wide")
 st.title("🌍 Language Translation Chatbot")
 
 # Sidebar for Controls
 with st.sidebar:
     st.header("⚙️ Settings")
-    theme = st.radio("Select Theme:", ["Light", "Dark"], key="theme_select")
+    theme = st.radio("Select Theme:", ["Light", "Dark"], key="theme_select")  # Added unique key here
     if theme == "Dark":
         st.markdown("<style>body { background-color: #1e1e1e; color: white; }</style>", unsafe_allow_html=True)
 
-# Initialize Session State Variables
-if "speech_text" not in st.session_state:
-    st.session_state.speech_text = ""
-if "file_text" not in st.session_state:
-    st.session_state.file_text = ""
-if "manual_text" not in st.session_state:
-    st.session_state.manual_text = ""
-if "history" not in st.session_state:
-    st.session_state.history = []
-
 # Functions
+
 def clean_text(text):
     text = re.sub(r'[^\w\s.,!?]', '', text)
-    return re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 def translate_text(text, dest_languages):
     translator = Translator()
@@ -47,15 +37,18 @@ def translate_text(text, dest_languages):
     try:
         for lang in dest_languages:
             translated = translator.translate(text, dest=lang)
-            translations[LANGUAGES[lang]] = translated.text
+            translations[LANGUAGES[lang]] = translated.text.encode('utf-8', 'ignore').decode('utf-8')
         return translations
     except Exception as e:
         return {"Error": str(e)}
 
 def detect_language(text):
-    translator = Translator()
-    detected = translator.detect(text)
-    return detected.lang if detected.lang in LANGUAGES else "Unknown"
+    try:
+        translator = Translator()
+        detected = translator.detect(text)
+        return detected.lang
+    except Exception:
+        return "Unknown"
 
 def text_to_speech(text, lang):
     lang_code = next((code for code, name in LANGUAGES.items() if name.lower() == lang.lower()), None)
@@ -69,17 +62,16 @@ def text_to_speech(text, lang):
 
 def speech_to_text():
     recognizer = sr.Recognizer()
-    try:
-        fs = 44100  # Sampling frequency
-        duration = 5  # Recording duration in seconds
+    with sr.Microphone() as source:
         st.write("🎤 Listening... Speak now!")
-        audio_data = sd.rec(int(fs * duration), samplerate=fs, channels=1, dtype=np.int16)
-        sd.wait()
-        audio_np = np.array(audio_data, dtype=np.int16)
-        audio = sr.AudioData(audio_np.tobytes(), fs, 2)
-        return recognizer.recognize_google(audio)
-    except Exception as e:
-        return str(e)
+        try:
+            audio = recognizer.listen(source, timeout=5)
+            text = recognizer.recognize_google(audio)
+            return text
+        except sr.UnknownValueError:
+            return "Could not understand audio"
+        except sr.RequestError:
+            return "Error with speech recognition service"
 
 def extract_text_from_file(uploaded_file):
     file_type = uploaded_file.type
@@ -94,24 +86,42 @@ def extract_text_from_file(uploaded_file):
     elif "image" in file_type:
         try:
             img = Image.open(uploaded_file)
-            return clean_text(pytesseract.image_to_string(img))
+            text = pytesseract.image_to_string(img)
+            return clean_text(text)
         except Exception as e:
-            return f"Error extracting text: {e}"
+            st.error(f"Error extracting text from image: {e}")
+            return ""
     else:
         return "Unsupported file type"
+
+def save_history_as_txt(history):
+    if not history:
+        return None
+    text = ""
+    for entry in history:
+        text += f"Original: {entry['Original']}\n"
+        for lang, translation in entry['Translated'].items():
+            text += f"Translated ({lang}): {translation}\n"
+        text += "---\n"
+    return text.encode()
+
+# Main Section
+if "speech_text" not in st.session_state:
+    st.session_state.speech_text = ""  # Store speech input in session state
 
 # Target Languages Selection
 dest_languages = st.multiselect("📌 Select target languages:", options=list(LANGUAGES.values()))
 
 # Voice Input Section
 st.write("## 🎤 Voice Input for Translation")
-if st.button("🎙️ Speak for Translation"):
-    st.session_state.speech_text = speech_to_text()
+voice_input = st.button("🎙️ Speak for Translation")
 
-if st.session_state.speech_text:
-    st.text_area("🎤 Recognized Speech:", st.session_state.speech_text, height=150)
-    detected_lang = detect_language(st.session_state.speech_text)
-    st.write(f"🌍 Detected Language: {LANGUAGES.get(detected_lang, 'Unknown')}")
+if voice_input:
+    st.session_state.speech_text = speech_to_text()
+    if st.session_state.speech_text:
+        st.text_area("🎤 Recognized Speech for Translation:", st.session_state.speech_text, height=150)
+        detected_lang = detect_language(st.session_state.speech_text)
+        st.write(f"🌍 Detected Language: {LANGUAGES.get(detected_lang, 'Unknown')}")
 
 # Translate Voice Input
 if st.button("🔄 Translate Voice Input"):
@@ -123,43 +133,72 @@ if st.button("🔄 Translate Voice Input"):
             st.write(f"**{lang}:** {trans}")
             audio_file = text_to_speech(trans, lang)
             if audio_file:
-                st.download_button("🔊 Download Audio", data=open(audio_file, "rb"), file_name="translated_audio.mp3", mime="audio/mp3")
+                st.audio(audio_file, format='audio/mp3')
+        if "history" not in st.session_state:
+            st.session_state.history = []
+        st.session_state.history.append({"Original": st.session_state.speech_text.strip(), "Translated": translations})
     else:
-        st.write("⚠️ Speak first and select a language.")
+        st.write("⚠️ Please speak and select at least one language to translate.")
 
-# File Upload & Translation
+# File Upload & Translation Section
 st.write("## 📂 File Upload & Translation")
 uploaded_file = st.file_uploader("Upload a file (TXT, PDF, DOCX, PNG, JPG)", type=["txt", "pdf", "docx", "png", "jpg", "jpeg"])
 if uploaded_file:
-    st.session_state.file_text = extract_text_from_file(uploaded_file)
-    st.text_area("📜 Extracted Text:", st.session_state.file_text, height=150)
+    extracted_text = extract_text_from_file(uploaded_file)
+    st.write("### Extracted Text:")
+    st.write(extracted_text)
 
-if st.button("🔄 Translate File Input"):
-    if st.session_state.file_text and dest_languages:
-        lang_codes = [code for code, name in LANGUAGES.items() if name in dest_languages]
-        translations = translate_text(st.session_state.file_text, lang_codes)
-        st.write("### 📝 Translated File Input:")
-        for lang, trans in translations.items():
-            st.write(f"**{lang}:** {trans}")
-            audio_file = text_to_speech(trans, lang)
-            if audio_file:
-                st.download_button("🔊 Download Audio", data=open(audio_file, "rb"), file_name="translated_audio.mp3", mime="audio/mp3")
-    else:
-        st.write("⚠️ Upload a file and select a language.")
+    # Translate File Input
+    if st.button("🔄 Translate File Input"):
+        if extracted_text and dest_languages:
+            lang_codes = [code for code, name in LANGUAGES.items() if name in dest_languages]
+            translations = translate_text(extracted_text, lang_codes)
+            st.write("### 📝 Translated File Input:")
+            for lang, trans in translations.items():
+                st.write(f"**{lang}:** {trans}")
+                audio_file = text_to_speech(trans, lang)
+                if audio_file:
+                    st.audio(audio_file, format='audio/mp3')
+            if "history" not in st.session_state:
+                st.session_state.history = []
+            st.session_state.history.append({"Original": extracted_text.strip(), "Translated": translations})
+        else:
+            st.write("⚠️ Please upload a file and select at least one language to translate.")
 
 # Text Input for Translation
 st.write("## ✏️ Enter Text for Translation")
-text_input = st.text_area("Enter text:", key="manual_text")
+# Only show text input if no voice input or file upload input is present
+if not (st.session_state.speech_text or uploaded_file):
+    text_input = st.text_area("Enter text to translate:", value="")
+else:
+    text_input = ""  # Clear the text area if voice input or file upload has been used
 
+# Detect language of the entered text
+detected_lang = detect_language(text_input) if text_input else None
+if detected_lang:
+    st.write(f"🌍 Detected Language: {LANGUAGES.get(detected_lang, 'Unknown')}")
+
+# Translate Text Input
 if st.button("🔄 Translate Text Input"):
     if text_input and dest_languages:
         lang_codes = [code for code, name in LANGUAGES.items() if name in dest_languages]
         translations = translate_text(text_input, lang_codes)
-        st.write("### 📝 Translated Text:")
+        st.write("### 📝 Translated Text Input:")
         for lang, trans in translations.items():
             st.write(f"**{lang}:** {trans}")
             audio_file = text_to_speech(trans, lang)
             if audio_file:
-                st.download_button("🔊 Download Audio", data=open(audio_file, "rb"), file_name="translated_audio.mp3", mime="audio/mp3")
+                st.audio(audio_file, format='audio/mp3')
+        if "history" not in st.session_state:
+            st.session_state.history = []
+        st.session_state.history.append({"Original": text_input.strip(), "Translated": translations})
     else:
-        st.write("⚠️ Enter text and select a language.")
+        st.write("⚠️ Please enter text or select at least one language to translate.")
+
+# Right-Side Section for Download
+with st.sidebar:
+    st.write("### 🔍 Translation History")
+    if st.button("📄 Download Translation History (TXT)"):
+        txt_file = save_history_as_txt(st.session_state.history)
+        if txt_file:
+            st.download_button("⬇️ Download History (TXT)", data=txt_file, file_name="translation_history.txt", mime="text/plain")
